@@ -91,6 +91,13 @@ export class Tracker {
       }
       case 'node_status':
         this.room(message.node, now).online = message.online;
+        if (!message.online) {
+          // A node gone (its last will) hears nobody: its last readings go
+          // with it, rather than holding a device in its room for 30 s.
+          for (const device of this.devices.values()) {
+            device.readings.delete(message.node);
+          }
+        }
         return;
       case 'telemetry': {
         const room = this.room(message.node, now);

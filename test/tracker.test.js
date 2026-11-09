@@ -60,6 +60,15 @@ test('a room that no longer hears the device under the maximum gives it up at on
   assert.equal(tracker.evaluate('phone:a', T0 + 1000, SETTINGS).room, 'hall');
 });
 
+test('a node gone offline (its last will) drops its readings at once', () => {
+  const tracker = new Tracker();
+  read(tracker, 'kitchen', 0.8, T0);
+  read(tracker, 'hall', 3, T0);
+  assert.equal(tracker.evaluate('phone:a', T0, SETTINGS).room, 'kitchen');
+  tracker.apply({ kind: 'node_status', node: 'kitchen', online: false }, T0 + 1000);
+  assert.equal(tracker.evaluate('phone:a', T0 + 1000, SETTINGS).room, 'hall');
+});
+
 test('heard by nobody, the device keeps its room for the away delay, then is away', () => {
   const tracker = new Tracker();
   read(tracker, 'kitchen', 2, T0);
