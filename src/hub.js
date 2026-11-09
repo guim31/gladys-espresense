@@ -106,6 +106,7 @@ export class Hub {
     this.startedAt = this.now();
     this.discoveryKey = '';
     this.occupantsKey = undefined;
+    this.everConnected = false;
     this.outageSince = null;
     if (!isConfigured(config)) {
       await this.#status(false, MESSAGES.notConfigured);
@@ -163,6 +164,12 @@ export class Hub {
   async onLinkState(state, detail) {
     const url = safeUrl(this.config.broker_url);
     if (state === 'connected') {
+      if (!this.everConnected) {
+        // The startup grace counts from the first connection, not from the
+        // configuration: nothing is heard before.
+        this.everConnected = true;
+        this.startedAt = this.now();
+      }
       this.#endOutage();
       logger.info(`Connected to the MQTT broker ${url}`);
       await this.#status(true);
@@ -388,9 +395,9 @@ export class Hub {
       const ids = roomIds(this.gladys, key);
       const room = this.tracker.rooms.get(key);
       const count = (occupants.get(key) ?? []).length;
-      // A device not placed yet (just after a start) would make the room look
-      // empty for a tick: the counts wait for every device.
-      if (!pending) {
+      // A device not placed yet (just after a start) could be in an empty
+      // looking room: a room only says "empty" once every device is placed.
+      if (!pending || count > 0) {
         states.push(
           { device_feature_external_id: ids.feature('occupied'), state: count > 0 ? 1 : 0 },
           { device_feature_external_id: ids.feature('count'), state: count },
@@ -404,15 +411,13 @@ export class Hub {
       }
     }
 
-    if (!pending) {
-      this.occupants = occupants;
-    }
+    this.occupants = occupants;
     await this.#publish(states);
     await this.#pingPresences(tracked);
     for (const event of events) {
       await this.#fireEntered(event);
     }
-    if (events.length > 0 || (!pending && this.#roomsChanged(occupants))) {
+    if (events.length > 0 || this.#roomsChanged(occupants)) {
       this.requestWidgetRefresh();
     }
     this.tracker.prune(now, (id) => tracked.some((entry) => entry.id === id));

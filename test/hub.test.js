@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateWidgetContent } from '@gladysassistant/integration-sdk';
-import { roomIds, trackedIds } from '../src/devices.js';
+import { buildTrackedDevice, roomIds, trackedIds } from '../src/devices.js';
 import {
   BROKER_URL,
   addDiscovered,
@@ -366,4 +366,23 @@ test('an empty configuration saved while connecting cancels that connection', as
   } finally {
     world.app.stop();
   }
+});
+
+test('after a restart, an occupied room shows at once, an empty one waits', async (t) => {
+  const first = await addedWorld(t);
+  const devices = [
+    ...first.gladys.devices,
+    { ...buildTrackedDevice(first.gladys, { id: 'phone:bob', name: 'Bob' }, 'fr') },
+  ];
+  first.app.stop();
+  const world = await createWorld({ devices });
+  t.after(() => world.app.stop());
+  world.broker.accept();
+  announceNodes(world);
+  hear(world, { living_room: 1.2 });
+  await advance(t, 4 * SECOND);
+  assert.equal(lastState(world, room(world, 'living_room', 'occupied')), 1);
+  assert.equal(lastState(world, room(world, 'kitchen', 'occupied')), undefined);
+  await advance(t, 120 * SECOND);
+  assert.equal(lastState(world, room(world, 'kitchen', 'occupied')), 0);
 });
