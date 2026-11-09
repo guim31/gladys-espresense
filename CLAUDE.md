@@ -31,17 +31,19 @@ pushing.
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+index.js                          SDK wiring only: src/app.js registers the handlers before connect()
+src/app.js                        handlers: discovery, action, scene action, widget, configuration
+src/hub.js                        MQTT link, discovery, states every 2 s, presence pings, trigger
+src/tracker.js                    pure: readings -> room of each device (nearest node, margin, away, companion)
+src/espresense.js                 pure: the ESPresense topics and payloads, the firmware's slug, anonymous ids
+src/devices.js                    tracked and room devices, their features
+src/mqtt.js                       MQTT client and its link states
+src/scenes.js, src/widgets.js     where_is scene action, rooms widget
+src/texts.js                      every text, in en/fr/de/es
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
-gladys-assistant-integration.json manifest: name, config_schema, actions, image...
-docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
-.github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
+gladys-assistant-integration.json manifest
+docs/{en,fr,de,es}.md             user documentation, re-hosted by Gladys
+test/                             node --test, against the SDK's fake Gladys and a fake broker
 ```
 
 ## Rules
@@ -251,3 +253,31 @@ long, et sur un « Sie »/« Ihr… » de politesse en allemand. Le store exige 
 - Docs `en`, `fr`, `de`, `es` avec les mêmes sections.
 - Chauffe, ouverture, sécurité : ne rien rendre pilotable « comme un thermostat » ou par un assistant
   vocal quand une erreur serait dangereuse (leçon d'OctoPrint).
+
+## ESPresense (cette intégration)
+
+- **Format** lu dans les sources (firmware `main/main.cpp`, `main/BleFingerprint.cpp` ; companion
+  `src/Services/Mqtt/MqttTopics.cs`, `src/Models/DeviceReport.cs`) : `espresense/devices/<id>/<nœud>`
+  (JSON, `distance` en m, QoS 0, non retenu, toutes les quelques secondes), `espresense/rooms/<nœud>/status`
+  (`online`/`offline`, LWT retenu), `…/telemetry`, `…/name` (nom tapé, retenu) ;
+  `espresense/companion/status` (LWT) et `espresense/companion/<id>` (nom de la pièce calculée ou `not_home`,
+  retenu). Le préfixe `espresense` est **codé en dur** dans le firmware et le companion : le réglage ne sert
+  qu'aux ponts.
+- `devices/<id>/<nœud>/<rapport>` (4 niveaux) existe aussi (rapports de capteurs en tampon) : ignoré.
+- **Id de nœud = slug du nom de la pièce** (`slugify` du firmware : minuscules, tout ce qui n'est pas
+  `[a-z0-9_]` devient un `_`, octet par octet, donc `Séjour` → `s_jour`). Le companion publie le nom de ses
+  pièces tel que tapé : on les rapproche par ce même slug.
+- **Ids anonymes** : MAC seule (12 hex), `ad:`, `md:`, `sd:`, `exp:`, `smarttag:`, `msft:` (empreintes
+  d'annonces, partagées par un modèle). Masqués de la Découverte par défaut. Les ids `irk:`, `known:`,
+  `iBeacon:`, `tile:`, `apple:…`, alias (`phone:…`) sont proposés.
+- Le payload d'une lecture n'a **pas** d'`idType` (le firmware ne l'envoie plus) ; la capture du companion en a
+  un, ignoré.
+- Délai d'absence compté depuis la **dernière lecture valide** (sous la distance max), pas depuis la dernière
+  évaluation. Au démarrage, un appareil ajouté et pas encore entendu n'est pas publié avant ce délai (sinon
+  chaque redémarrage le marquerait absent).
+- Distance : publiée à chaque écart de 0,5 m, sinon au plus une fois par minute (les lectures oscillent de
+  quelques décimètres à chaque seconde, plafond de 300 états/min du cœur).
+- Présence utilisateur : `presence-sensor/push` « vu » à l'entrée dans une pièce puis toutes les 5 min, comme
+  OwnTracks ; c'est l'action « Vérifier la présence d'un utilisateur » du cœur qui fait le lien.
+- Le déclencheur `entered_room` a deux filtres `source: devices` (appareil, pièce) : la liste propose tous les
+  appareils de l'intégration, les deux types mêlés (seule source dynamique).
