@@ -30,6 +30,13 @@ Gladys before reporting a problem.
 
 In scope: the code of this repository and the Docker image it publishes.
 
+The integration connects to the MQTT broker set in its configuration, with the
+user name and password typed there (kept by Gladys, never logged, never written
+by the integration), and only subscribes to the ESPresense topics: it never
+publishes. It keeps in memory the readings of the last minutes (device ids,
+distances, rooms) and writes nothing to `/data` but its MQTT client id. No
+other network access, no cloud service.
+
 Out of scope: Gladys Assistant itself (see its
 [security policy](https://github.com/GladysAssistant/Gladys/security/policy)),
-and the third-party services and devices the integration talks to.
+the MQTT broker, ESPresense and ESPresense-companion.
