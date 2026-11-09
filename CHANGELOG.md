@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
 ### Added
 
 - Room-by-room presence from ESPresense: the integration reads the MQTT broker
@@ -28,4 +30,5 @@ the notes of the version's GitHub Release.
   dashboard widget "ESPresense rooms", "Check the connection" action.
 - English, French, German and Spanish texts and documentation.
 
-[Unreleased]: https://github.com/guim31/gladys-espresense/commits/main
+[Unreleased]: https://github.com/guim31/gladys-espresense/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/guim31/gladys-espresense/releases/tag/v1.0.0
