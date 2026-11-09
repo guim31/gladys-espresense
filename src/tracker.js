@@ -180,6 +180,10 @@ export class Tracker {
     let next;
     if (this.usesCompanion(device, settings)) {
       next = device.companionRoom;
+      // Should the companion stop, the nodes take over with a full away delay.
+      if (next !== null) {
+        device.lastValidAt = now;
+      }
     } else {
       next = this.#fromNodes(device, now, settings);
     }

@@ -119,3 +119,13 @@ test('stale readings are dropped, forgotten devices too, the kept ones stay', ()
   assert.deepEqual([...tracker.devices.keys()], ['phone:a']);
   assert.equal(tracker.devices.get('phone:a').readings.size, 0);
 });
+
+test('when the companion stops, the nodes take over with a full away delay', () => {
+  const tracker = new Tracker();
+  tracker.apply({ kind: 'companion_status', online: true }, T0);
+  tracker.apply({ kind: 'companion_state', id: 'phone:a', room: 'Office' }, T0);
+  assert.equal(tracker.evaluate('phone:a', T0, SETTINGS).room, 'office');
+  tracker.apply({ kind: 'companion_status', online: false }, T0 + 1000);
+  assert.equal(tracker.evaluate('phone:a', T0 + 1000, SETTINGS).room, 'office');
+  assert.equal(tracker.evaluate('phone:a', T0 + 121_000, SETTINGS).room, null);
+});

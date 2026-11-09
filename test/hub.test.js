@@ -320,3 +320,50 @@ test('the broker refusing the login is told on the integration page', async () =
     world.app.stop();
   }
 });
+
+test('a broker outage longer than the away delay marks nobody away', async (t) => {
+  const world = await addedWorld(t, { config: { broker_url: BROKER_URL, away_after: '60' } });
+  world.broker.drop();
+  await advance(t, 200 * SECOND);
+  assert.equal(lastState(world, phone(world, 'present')), 1);
+  world.broker.accept();
+  await advance(t, 2 * SECOND);
+  hear(world, { living_room: 1.2 });
+  await advance(t, 4 * SECOND);
+  assert.equal(lastState(world, phone(world, 'present')), 1);
+  assert.deepEqual(world.gladys.fake.sceneEvents, []);
+});
+
+test('after a restart, the rooms do not look empty before the devices are placed', async (t) => {
+  const first = await addedWorld(t);
+  const devices = first.gladys.devices;
+  first.app.stop();
+  const world = await createWorld({ devices });
+  t.after(() => world.app.stop());
+  world.broker.accept();
+  announceNodes(world);
+  await advance(t, 4 * SECOND);
+  assert.equal(lastState(world, room(world, 'living_room', 'occupied')), undefined);
+  hear(world, { living_room: 1.2 });
+  await advance(t, 2 * SECOND);
+  const occupied = world.gladys.fake.states
+    .filter((s) => s.device_feature_external_id === room(world, 'living_room', 'occupied'))
+    .map((s) => s.state);
+  assert.deepEqual(occupied, [1]);
+});
+
+test('an empty configuration saved while connecting cancels that connection', async () => {
+  const world = await createWorld({ config: {} });
+  try {
+    let release;
+    world.hub.loadClientId = () => new Promise((resolve) => (release = resolve));
+    const pending = world.hub.configure({ ...world.hub.config, broker_url: BROKER_URL });
+    await world.hub.configure({ ...world.hub.config, broker_url: '' });
+    release({ clientId: 'x' });
+    await pending;
+    assert.equal(world.hub.client, null);
+    assert.equal(world.broker.clients.length, 0);
+  } finally {
+    world.app.stop();
+  }
+});

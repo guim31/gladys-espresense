@@ -82,6 +82,9 @@ export class Hub {
   // --- lifecycle --------------------------------------------------------------
 
   async configure(config) {
+    // Any newer configuration, even an empty one, cancels a connection still
+    // waiting for its client id.
+    const generation = ++this.generation;
     const previous = this.config;
     this.config = config;
     const sameLink =
@@ -102,11 +105,12 @@ export class Hub {
     this.shown.clear();
     this.startedAt = this.now();
     this.discoveryKey = '';
+    this.occupantsKey = undefined;
+    this.outageSince = null;
     if (!isConfigured(config)) {
       await this.#status(false, MESSAGES.notConfigured);
       return;
     }
-    const generation = ++this.generation;
     const { clientId } = await this.loadClientId();
     if (generation !== this.generation) {
       return;
@@ -159,12 +163,33 @@ export class Hub {
   async onLinkState(state, detail) {
     const url = safeUrl(this.config.broker_url);
     if (state === 'connected') {
+      this.#endOutage();
       logger.info(`Connected to the MQTT broker ${url}`);
       await this.#status(true);
       return;
     }
+    this.outageSince ??= this.now();
     logger.warn(`MQTT broker ${url}: ${state} (${detail ?? 'no detail'})`);
     await this.#status(false, state === 'refused' ? MESSAGES.refused : MESSAGES.unreachable);
+  }
+
+  /**
+   * Back from a broker outage: nobody was heard because nothing was received.
+   * The away delay starts again now, so an outage longer than it does not
+   * mark everyone away (and fire entered_room for everyone on return).
+   */
+  #endOutage() {
+    if (this.outageSince === null || this.outageSince === undefined) {
+      return;
+    }
+    const now = this.now();
+    this.outageSince = null;
+    this.startedAt = now;
+    for (const device of this.tracker.devices.values()) {
+      if (device.lastValidAt !== null) {
+        device.lastValidAt = now;
+      }
+    }
   }
 
   // --- messages ---------------------------------------------------------------
@@ -290,6 +315,10 @@ export class Hub {
     if (!this.config || !isConfigured(this.config)) {
       return;
     }
+    // Without the broker, nothing is heard: keep every state as it is.
+    if (this.client?.state !== 'connected') {
+      return;
+    }
     const now = this.now();
     const settings = this.#settings();
     const language = this.config.language;
@@ -297,11 +326,13 @@ export class Hub {
     const states = [];
     const events = [];
     const occupants = new Map();
+    let pending = false;
 
     for (const { id, device } of tracked) {
       const known = this.tracker.devices.get(id);
       if (!known && now - this.startedAt < settings.awayMs) {
-        continue; // not heard since the start yet: wait before saying "away"
+        pending = true; // not heard since the start yet: wait before saying "away"
+        continue;
       }
       const placed = this.tracker.evaluate(id, now, settings);
       const ids = trackedIds(this.gladys, id);
@@ -313,6 +344,9 @@ export class Hub {
       if (shown.room !== undefined && shown.room !== placed.room && room) {
         events.push({ device, room });
       }
+      if (shown.room !== placed.room && room) {
+        shown.presenceAt = undefined; // seen at once on entering a room
+      }
       shown.room = placed.room;
       states.push(
         {
@@ -321,6 +355,11 @@ export class Hub {
         },
         { device_feature_external_id: ids.feature('present'), state: room ? 1 : 0 },
       );
+      if (placed.distance === null && !room) {
+        // Away and heard by nobody: no distance to tell (the last one stays
+        // in Gladys, there is no "no value" state).
+        shown.distance = null;
+      }
       if (placed.distance !== null) {
         const distance = roundDistance(placed.distance);
         if (
@@ -349,10 +388,14 @@ export class Hub {
       const ids = roomIds(this.gladys, key);
       const room = this.tracker.rooms.get(key);
       const count = (occupants.get(key) ?? []).length;
-      states.push(
-        { device_feature_external_id: ids.feature('occupied'), state: count > 0 ? 1 : 0 },
-        { device_feature_external_id: ids.feature('count'), state: count },
-      );
+      // A device not placed yet (just after a start) would make the room look
+      // empty for a tick: the counts wait for every device.
+      if (!pending) {
+        states.push(
+          { device_feature_external_id: ids.feature('occupied'), state: count > 0 ? 1 : 0 },
+          { device_feature_external_id: ids.feature('count'), state: count },
+        );
+      }
       if (room && room.online !== null) {
         states.push({
           device_feature_external_id: ids.feature('node_online'),
@@ -361,13 +404,15 @@ export class Hub {
       }
     }
 
-    this.occupants = occupants;
+    if (!pending) {
+      this.occupants = occupants;
+    }
     await this.#publish(states);
     await this.#pingPresences(tracked);
     for (const event of events) {
       await this.#fireEntered(event);
     }
-    if (events.length > 0 || this.#roomsChanged(occupants)) {
+    if (events.length > 0 || (!pending && this.#roomsChanged(occupants))) {
       this.requestWidgetRefresh();
     }
     this.tracker.prune(now, (id) => tracked.some((entry) => entry.id === id));
